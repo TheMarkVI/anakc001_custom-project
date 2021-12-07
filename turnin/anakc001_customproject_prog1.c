@@ -7,7 +7,17 @@
  *                      - Temperature Mode (Temperature module)
  *                      - IR Remote (Remote-operated fan, including buttons)
  * 
- *  Video Demos available in PDF Report
+ *  Video Demo: https://drive.google.com/file/d/1oZcxA3mG6k_JgHkmsC2MGWG3xBk2Dn1h/view?usp=sharing
+ *      - Current progress: Basic button functionality and display status.
+ *      - Other display that will be used for animation still in progress.
+ *      - Goal was to make the user interface function properly.
+ *      - Of course, this week's progression did not implement new complexities yet.
+ *      - Next goals: Implement second LCD screen (fan animation)
+ *              - May need to look into implementing two atmega microcontrollers
+ * 
+ *      - Might re-implement status display with a nokia display instead
+ *          - Fan animation will still be used for second screen.
+ *              (have two nokia screens. will try to implement both in.)
  *
  *	I acknowledge all content contained herein, excluding template or example
  *	code, is my own original work.
@@ -48,51 +58,46 @@
 #include <avr/io.h>
 #include "io.h"
 #include "timer.h"
-#include "ADC.h"
-#include "nokia5110.h"
-#include "fanbitmaps.h"
+// #include "scheduler.h"
 
 #ifdef _SIMULATE_
 #include "simAVRHeader.h"
 #endif
 
-unsigned char tempA = 0x00;
 unsigned char tempB = 0x00;
-unsigned char tempC = 0x00;
 unsigned char tempD = 0x00;
 
 #define maxSpeed 4 
 unsigned char speeds[maxSpeed] = {1, 2, 3, 4};
-unsigned char motorSpeeds[maxSpeed] = {11, 20, 40, 100};
 unsigned char pos_speed = 0;
 unsigned char tempThreshold = 0x00;
 unsigned char tempCurrent = 0x00;
 
-unsigned char fanOn = 0x00; // fan status variable
+unsigned char fanOn = 0x00; // DC motor status variable
 unsigned char oscillateOn = 0x00; // oscillator status variable
 unsigned char tempMode = 0x00; // temperature mode status variable
 
 enum fanStates{F_start, F_wait, F_off, F_on, F_setSpeed, F_tempMode, F_oscillate, F_press} F_state;
 void F_Tick() {
-    tempA = ~PINA;
+    tempD = ~PIND;
     switch(F_state) { // transitions
         case F_start:
             F_state = F_wait;
             break;
         case F_wait:
-            if((tempA & 0x0F) == 0x08 && fanOn == 0x00) {
+            if((tempD & 0x0F) == 0x08 && fanOn == 0x00) {
                 F_state = F_on;
             }
-            else if((tempA & 0x0F) == 0x08 && fanOn == 0x01) {
+            else if((tempD & 0x0F) == 0x08 && fanOn == 0x01) {
                 F_state = F_off;
             }
-            else if((tempA & 0x0F) == 0x04) {
+            else if((tempD & 0x0F) == 0x04) {
                 F_state = F_setSpeed;
             }
-            else if((tempA & 0x0F) == 0x02) {
+            else if((tempD & 0x0F) == 0x02) {
                 F_state = F_oscillate;
             }
-            else if((tempA & 0x0F) == 0x01) {
+            else if((tempD & 0x0F) == 0x01) {
                 F_state = F_tempMode;
             }
             else {
@@ -115,7 +120,7 @@ void F_Tick() {
             F_state = F_press;
             break;
         case F_press:
-            if((tempA & 0x0F) != 0x00) {
+            if((tempD & 0x0F) != 0x00) {
                 F_state = F_press;
             }
             else {
@@ -207,129 +212,32 @@ void F_Tick() {
             break;
     }
 
+    tempB = fanOn + (oscillateOn << 1) + (tempMode << 4);
+
+    PORTB = tempB;
+
 }
 
-unsigned char motor = 0x00;
-unsigned char motorEnable = 0x00;
-unsigned char motorDir = 0x02; // 1 for fwd, 2 for bkwd
-enum motorStates {M_start, M_off, M_on} M_state;
-void M_Tick() {
-    switch(M_state) { // transitions
-        case M_start:
-            M_state = M_off;
-            break;
-        case M_off:
-            if(fanOn == 0x00)
-                M_state = M_off;
-            else if(fanOn == 0x01)
-                M_state = M_on;
-            break;
-        case M_on:
-            if(fanOn == 0x00)
-                M_state = M_off;
-            else if(fanOn == 0x01)
-                M_state = M_on;
-            break;
-        default:
-            M_state = M_start;
-            break;
-    }
-    switch(M_state) { // state actions
-        case M_start:
-            break;
-        case M_off:
-            motorEnable = 0x00;
-            break;
-        case M_on:
-            if(motor <= 10) 
-                motorEnable = 0x00;
-            else if (motor <= motorSpeeds[pos_speed]) 
-                motorEnable = 0x01;
-            else
-                motor = 0;
-            motor++;
+enum oscillatorStates{O_start, off, on} O_state;
 
-            // motorEnable = 0x01;
-
+enum display1_States{d1_start, d1_output} d1_state;
+void d1_Tick() {
+    switch(d1_state) { // transitions
+        case d1_start:
             break;
+        case d1_output:
         default:
             break;
     }
-}
+    switch(d1_state) { // state actions
+        case d1_start:
 
-
-enum oscillatorStates{O_start, O_off, O_on} O_state;
-
-unsigned char turn = 0x00;
-enum display2_States{d2_start, d2_output, d2_pause} d2_state;
-void d2_Tick() {
-    switch(d2_state) { // transitions
-        case d2_start:
-            d2_state = d2_pause;
             break;
-        case d2_output:
-            if(fanOn == 0x01)
-                d2_state = d2_output;
-            else if(fanOn == 0x00)
-                d2_state = d2_pause;
-            break;
-        case d2_pause:
-            if(fanOn == 0x01)
-                d2_state = d2_output;
-            else if(fanOn == 0x00)
-                d2_state = d2_pause;
+        case d1_output:
+
             break;
         default:
-            d2_state = d2_start;
-            break;
-    }
-    switch(d2_state) { // state actions
-        case d2_start:
-            break;
-        case d2_output:
-            if(turn == 0x00) {
-                nokia_lcd_clear();
-                nokia_lcd_set_cursor(18,0);
-                nokia_lcd_write_bitmap(fan02_45);
-                nokia_lcd_render();
-                turn = 0x01;
-            }
-            else if (turn == 0x01) {
-                nokia_lcd_clear();
-                nokia_lcd_set_cursor(18,0);
-                nokia_lcd_write_bitmap(fan02);
-                nokia_lcd_render();
-                turn = 0x00;
-            }
-            break;
-        case d2_pause:
-            break;
-        default:
-            break;
-    }
-}
-
-enum output_States{out_start, out_output} out_state;
-void out_Tick() {
-    switch(out_state) { // transitions
-        case out_start:
-            out_state = out_output;
-            break;
-        case out_output:
-            out_state = out_output;
-            break;
-        default:
-            out_state = out_start;
-            break;
-    }
-    switch(out_state) { // state actions
-        case out_start:
-            break;
-        case out_output:
-            tempD = fanOn + (oscillateOn << 1) + (motorEnable << 3) + (motorDir << 4);
-            PORTD = tempD;
-            break;
-        default:
+            d1_state = d1_start;
             break;
     }
 }
@@ -339,50 +247,30 @@ int main(void) {
     // Port intializations are tentative.
     // May change the location of inputs/outputs around to figure out which one goes where.
     // 
-    DDRA = 0x00; PORTA = 0xFF; // Input: Buttons and IR remote/receiver
-    DDRB = 0xFF; PORTB = 0x00; // Output: LCD2 (The fan animation)
-    DDRC = 0xFF; PORTC = 0x00; // Output: LCD1 (The one with all the statuses)
-    DDRD = 0xFF; PORTD = 0x00; // Output: Fan motor, oscillator, (and LEDs?) + (LCD control)
+    DDRA = 0xFF; PORTA = 0x00; // Output: LCD1 (Fan Status) (Data line)
+    DDRB = 0xFF; PORTB = 0x00; // Output: Fan motor, oscillator, and LEDs (?)
+    DDRC = 0x00; PORTC = 0xFF; // Input: Temp sensor
+    DDRD = 0xF0; PORTD = 0x0F; // Input: Buttons and IR remote/receiver<?> (LCD control)
     // DDRA = 0xFF; PORTA = 0x00; // LCD data lines
     // DDRD = 0xFF; PORTD = 0x00; // LCD control lines
 
+    // LCD 2? Not sure. Might have to implement a second microcontroller that receives signal
+    //      from the main microcontroller
     unsigned long F_elapsedTime = 0;
-    unsigned long M_elapsedTime = 0;
-    unsigned long d2_elapsedTime = 0;
-    unsigned long out_elapsedTime = 0;
-    const unsigned long timerPeriod = 1;
+    const unsigned long timerPeriod = 10;
 
-    tempA = ~PINA;
-    // tempB = ~PINB;
-    // tempC = ~PINC;
-    // tempD = ~PIND;
+    tempD = ~PIND;
 
     F_state = F_start;
-    M_state = M_start;
-    d2_state = d2_start;
-    out_state = out_start;
-    
-
-    ADC_init();
 
     LCD_init();
     LCD_ClearScreen();
 
-    TimerSet(1);
+    TimerSet(100);
     TimerOn();
     
     LCD_DisplayString(1, "Pwr:Off Osc:Off Spd:1          ");
     LCD_Cursor(0);
-
-    nokia_lcd_init();
-    nokia_lcd_clear();
-    nokia_lcd_set_cursor(18,0);
-    nokia_lcd_write_bitmap(fan02);
-    nokia_lcd_render();
-
-    // unsigned char motor = 0;
-
-
     // LCD_DisplayString(17, "Oscillate: ");
     // "Pwr:    Osc:    Spd:           "
 
@@ -392,41 +280,11 @@ int main(void) {
             F_Tick();
             F_elapsedTime = 0;
         }
-        if(M_elapsedTime >= 1) {
-            M_Tick();
-            M_elapsedTime = 0;
-        }
-        if(d2_elapsedTime >= 250) {
-            d2_Tick();
-            d2_elapsedTime = 0;
-        }
-        if(out_elapsedTime >= 1) {
-            out_Tick();
-            out_elapsedTime = 0;
-        }
-
-        // // Code testing
-
-
-        // if(motor <= 25) 
-        //     PORTD = 0x08;
-        // else if (motor <= 50) 
-        //     PORTD = 0x28;
-        // else
-        //     motor = 0;
-        // motor++;
-        // tempA = ADC;
-        // PORTD = (char) (tempA);
-        // PORTC = (char) (tempA >> 8);
 
         while(!TimerFlag) {}
         TimerFlag = 0;
 
-
         F_elapsedTime += timerPeriod;
-        M_elapsedTime += timerPeriod;
-        d2_elapsedTime += timerPeriod;
-        out_elapsedTime += timerPeriod;
     }
     return 1;
 }
