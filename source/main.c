@@ -126,7 +126,6 @@ void F_Tick() {
             F_state = F_start;
             break;
     }
-
     switch(F_state) { // actions
         case F_start:
             break;
@@ -257,8 +256,116 @@ void M_Tick() {
     }
 }
 
-
-enum oscillatorStates{O_start, O_off, O_on} O_state;
+unsigned char servoMotor = 0x00;
+unsigned char servoTime = 0x00;
+static unsigned char servoWait = 0x00;
+unsigned char left = 2;
+unsigned char right = 1;
+enum oscillatorStates{osc_start, osc_off, osc_wait, osc_left, osc_right} osc_state;
+void osc_Tick() {
+    switch(osc_state) { // transitions
+        case osc_start:
+            osc_state = osc_off;
+            break;
+        case osc_off:
+            if(oscillateOn == 0x00) {
+                osc_state = osc_off;
+            }
+            else if(oscillateOn == 0x01) {
+                osc_state = osc_left;
+            }
+            break;
+        case osc_left:
+            if(oscillateOn == 0x00) {
+                osc_state = osc_off;
+            }
+            else if(oscillateOn == 0x01 && servoWait <= 100) {
+                osc_state = osc_left;
+            }
+            else if(oscillateOn == 0x01 && servoWait > 100) {
+                osc_state = osc_wait;
+            }
+            servoWait++;
+            break;
+        case osc_wait:
+            if(oscillateOn == 0x00) {
+                osc_state = osc_off;
+            }
+            else if(oscillateOn == 0x01 && servoWait <= 1) {
+                osc_state = osc_left;
+            }
+            else if(oscillateOn == 0x01 && servoWait <= 1000) {
+                osc_state = osc_wait;
+            }
+            else if(oscillateOn == 0x01 && servoWait > 1000) {
+                osc_state = osc_right;
+            }
+            servoWait++;
+            break;
+        case osc_right:
+            if(oscillateOn == 0x00) {
+                osc_state = osc_off;
+            }
+            else if(oscillateOn == 0x01 && servoWait <= 1100) {
+                osc_state = osc_right;
+            }
+            else if(oscillateOn == 0x01 && servoWait > 1100) {
+                osc_state = osc_wait;
+                servoWait = 0;
+            }
+            servoWait++;
+            break;
+        default:
+            break;
+    }
+    switch(osc_state) { // state actions
+        case osc_start:
+            break;
+        case osc_off:
+            servoMotor = 0x00;
+            break;
+        case osc_left:
+            // Code for one oscillation
+            // PWM period: 20ms
+            // 1 ms => 0 degrees
+            // 2 ms => 180 degrees
+            // if(oscil_motor <= 0) 
+            //     servoMotor = 0x01;
+            // else if (oscil_motor <= 20) 
+            //     servoMotor = 0x00;
+            // else
+            //     oscil_motor = 0;
+            // oscil_motor++;
+                if(servoTime <= left) {
+                    servoMotor = 0x01;
+                }
+                else if (servoTime <= 20) { 
+                    servoMotor = 0x00;
+                }
+                else { 
+                    servoTime = 0x00;
+                }
+                servoTime++;
+            break;
+        case osc_wait:
+            servoMotor = 0x00;
+            break;
+        case osc_right:
+            if(servoTime <= right) {
+                    servoMotor = 0x01;
+                }
+                else if (servoTime <= 20) { 
+                    servoMotor = 0x00;
+                }
+                else { 
+                    servoTime = 0x00;
+                }
+                servoTime++;
+            break;
+        default:
+            break;
+    }
+}
 
 unsigned char turn = 0x00;
 enum display2_States{d2_start, d2_output, d2_pause} d2_state;
@@ -326,7 +433,7 @@ void out_Tick() {
         case out_start:
             break;
         case out_output:
-            tempD = fanOn + (oscillateOn << 1) + (motorEnable << 3) + (motorDir << 4);
+            tempD = fanOn + (oscillateOn << 1) + (servoMotor << 2) + (motorEnable << 3) + (motorDir << 4);
             PORTD = tempD;
             break;
         default:
@@ -335,19 +442,16 @@ void out_Tick() {
 }
 
 int main(void) {
-    /* Insert DDR and PORT initializations */
-    // Port intializations are tentative.
-    // May change the location of inputs/outputs around to figure out which one goes where.
-    // 
-    DDRA = 0x00; PORTA = 0xFF; // Input: Buttons and IR remote/receiver
+    DDRA = 0x00; PORTA = 0xFF; // Input: Buttons, IR Receiver, Temperature Sensor
     DDRB = 0xFF; PORTB = 0x00; // Output: LCD2 (The fan animation)
-    DDRC = 0xFF; PORTC = 0x00; // Output: LCD1 (The one with all the statuses)
-    DDRD = 0xFF; PORTD = 0x00; // Output: Fan motor, oscillator, (and LEDs?) + (LCD control)
+    DDRC = 0xFF; PORTC = 0x00; // Output: LCD1 (Status Display)
+    DDRD = 0xFF; PORTD = 0x00; // Output: Fan motor, oscillator, (and two status LEDs) + (LCD control)
     // DDRA = 0xFF; PORTA = 0x00; // LCD data lines
     // DDRD = 0xFF; PORTD = 0x00; // LCD control lines
 
     unsigned long F_elapsedTime = 0;
     unsigned long M_elapsedTime = 0;
+    unsigned long osc_elapsedTime = 0;
     unsigned long d2_elapsedTime = 0;
     unsigned long out_elapsedTime = 0;
     const unsigned long timerPeriod = 1;
@@ -359,11 +463,12 @@ int main(void) {
 
     F_state = F_start;
     M_state = M_start;
+    osc_state = osc_start;
     d2_state = d2_start;
     out_state = out_start;
     
 
-    ADC_init();
+    // ADC_init();
 
     LCD_init();
     LCD_ClearScreen();
@@ -381,12 +486,10 @@ int main(void) {
     nokia_lcd_render();
 
     // unsigned char motor = 0;
-
-
+    // unsigned char oscil_motor = 0;
     // LCD_DisplayString(17, "Oscillate: ");
     // "Pwr:    Osc:    Spd:           "
 
-    /* Insert your solution below */
     while (1) {
         if(F_elapsedTime >= 10) {
             F_Tick();
@@ -395,6 +498,10 @@ int main(void) {
         if(M_elapsedTime >= 1) {
             M_Tick();
             M_elapsedTime = 0;
+        }
+        if(osc_elapsedTime >= 1) {
+            osc_Tick();
+            osc_elapsedTime = 0;
         }
         if(d2_elapsedTime >= 250) {
             d2_Tick();
@@ -406,25 +513,35 @@ int main(void) {
         }
 
         // // Code testing
-
-
-        // if(motor <= 25) 
-        //     PORTD = 0x08;
-        // else if (motor <= 50) 
-        //     PORTD = 0x28;
+        // if(oscil_motor <= 0) 
+        //     PORTD = 0x04;
+        // else if (oscil_motor <= 20) 
+        //     PORTD = 0x00;
         // else
-        //     motor = 0;
-        // motor++;
+        //     oscil_motor = 0;
+        // oscil_motor++;
         // tempA = ADC;
         // PORTD = (char) (tempA);
         // PORTC = (char) (tempA >> 8);
+        // if(servoTime <= right) {
+        //             servoMotor = 0x01;
+        //         }
+        //         else if (servoTime <= 20) { 
+        //             servoMotor = 0x00;
+        //         }
+        //         else { 
+        //             servoTime = 0x00;
+        //         }
+        //         servoTime++;
+
+
 
         while(!TimerFlag) {}
         TimerFlag = 0;
 
-
         F_elapsedTime += timerPeriod;
         M_elapsedTime += timerPeriod;
+        osc_elapsedTime += timerPeriod;
         d2_elapsedTime += timerPeriod;
         out_elapsedTime += timerPeriod;
     }
